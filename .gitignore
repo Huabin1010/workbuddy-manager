@@ -22,7 +22,10 @@ config.json
 # 开发参考仓库（不提交）
 .ref/
 
-# 编辑器 / 系统
+# 本机打包产物与临时文件（Windows / Linux 安装包、交叉编译缓存）
+/dist/
+/tmp/
+/packaging/windows/launcher/target/
 .DS_Store
 .idea/
 .vscode/

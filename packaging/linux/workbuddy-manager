@@ -1,0 +1,365 @@
+#!/usr/bin/python3
+"""WorkBuddy Manager 桌面壳：本地服务 + 应用窗口 + 顶部状态栏图标。"""
+from __future__ import annotations
+
+import os
+import secrets
+import signal
+import socket
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+os.environ.setdefault("WEBKIT_DISABLE_DMABUF_RENDERER", "1")
+
+import gi
+
+gi.require_version("Gtk", "3.0")
+gi.require_version("Gdk", "3.0")
+gi.require_version("WebKit2", "4.1")
+gi.require_version("AyatanaAppIndicator3", "0.1")
+
+from gi.repository import AyatanaAppIndicator3, Gdk, Gio, GLib, Gtk, WebKit2
+
+APP_ID = "com.ithtelab.WorkbuddyManager"
+APP_ROOT = Path(os.environ.get("WORKBUDDY_APP_ROOT", "/usr/lib/workbuddy-manager"))
+PYDEPS = APP_ROOT / "pydeps"
+ICON_NAME = "workbuddy-manager"
+TRAY_ICON_NAME = "workbuddy-manager-tray"
+ICON_FILE = Path("/usr/share/icons/hicolor/256x256/apps/workbuddy-manager.png")
+TRAY_ICON_DIR = Path("/usr/share/icons/hicolor/48x48/apps")
+SYMBOLIC_ICON = "workbuddy-manager-symbolic"
+
+
+def data_dir() -> Path:
+    base = os.environ.get("XDG_DATA_HOME", "").strip()
+    root = Path(base) if base else Path.home() / ".local" / "share"
+    path = root / "workbuddy-manager"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+class WorkbuddyApp(Gtk.Application):
+    def __init__(self) -> None:
+        super().__init__(
+            application_id=APP_ID,
+            flags=Gio.ApplicationFlags.HANDLES_COMMAND_LINE,
+        )
+        self._ready = False
+        self.window: Gtk.ApplicationWindow | None = None
+        self.webview: WebKit2.WebView | None = None
+        self.proc: subprocess.Popen | None = None
+        self.port = 7864
+        self.log_path = data_dir() / "server.log"
+        self.indicator = None
+        self._first_password: str | None = None
+        self._quitting = False
+
+    def do_command_line(self, command_line: Gio.ApplicationCommandLine) -> int:
+        args = command_line.get_arguments()[1:]
+        background = "--background" in args
+        if self._ready:
+            if not background:
+                self.present_window()
+            return 0
+        self._ready = True
+        self.hold()
+        try:
+            self._prepare_icons()
+            self.start_server()
+        except Exception as exc:  # noqa: BLE001
+            self._error("WorkBuddy 管理台启动失败", str(exc))
+            self._shutdown_server()
+            self.release()
+            return 1
+        self._setup_indicator()
+        self._setup_window(present=not background)
+        return 0
+
+    def do_activate(self) -> None:
+        if self._ready:
+            self.present_window()
+
+    def _prepare_icons(self) -> None:
+        if ICON_FILE.is_file():
+            Gtk.Window.set_default_icon_from_file(str(ICON_FILE))
+        else:
+            Gtk.Window.set_default_icon_name(ICON_NAME)
+
+    def start_server(self) -> None:
+        if not (APP_ROOT / "server" / "main.py").is_file():
+            raise RuntimeError(f"找不到程序文件：{APP_ROOT / 'server' / 'main.py'}")
+        if not (APP_ROOT / "web" / "out" / "index.html").is_file():
+            raise RuntimeError("找不到已构建的网页界面（web/out/index.html）")
+
+        state = data_dir()
+        users = state / "users.json"
+        env = os.environ.copy()
+        env["PYTHONPATH"] = os.pathsep.join(
+            [str(PYDEPS), str(APP_ROOT), env.get("PYTHONPATH", "")]
+        ).rstrip(os.pathsep)
+        env["WB_MANAGER_HOST"] = "127.0.0.1"
+        env["WB_DATA_DIR"] = str(state)
+        env["WB_DB"] = str(state / "manager.db")
+        env["WB_USERS_FILE"] = str(users)
+        env["WB_STATIC_DIR"] = str(APP_ROOT / "web" / "out")
+        env["WB_SECURE_COOKIE"] = "false"
+        env["WB_ENABLE_DOCS"] = "0"
+        env.pop("WB_ADMIN_PASSWORD", None)
+        if not users.is_file():
+            self._first_password = secrets.token_urlsafe(9)
+            env["WB_ADMIN_PASSWORD"] = self._first_password
+            note = state / "initial-admin.txt"
+            note.write_text(
+                "用户名: admin\n"
+                f"密码: {self._first_password}\n"
+                "请登录后在「设置 → 管理用户」中修改，然后删除本文件。\n",
+                encoding="utf-8",
+            )
+            os.chmod(note, 0o600)
+
+        self.port = _free_port(7864)
+        env["WB_MANAGER_PORT"] = str(self.port)
+        log = open(self.log_path, "a", encoding="utf-8")
+        log.write(f"\n---- start {time.strftime('%F %T')} port={self.port} ----\n")
+        log.flush()
+        self.proc = subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "uvicorn",
+                "server.main:app",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                str(self.port),
+            ],
+            cwd=str(APP_ROOT),
+            env=env,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+        if not _wait_port(self.port, self.proc, timeout=40):
+            tail = _tail(self.log_path)
+            raise RuntimeError(f"后台服务没有在 127.0.0.1:{self.port} 就绪。\n\n{tail}")
+
+    def _setup_indicator(self) -> None:
+        icon = TRAY_ICON_NAME if (TRAY_ICON_DIR / f"{TRAY_ICON_NAME}.png").is_file() else ICON_NAME
+        self.indicator = AyatanaAppIndicator3.Indicator.new(
+            "workbuddy-manager",
+            icon,
+            AyatanaAppIndicator3.IndicatorCategory.APPLICATION_STATUS,
+        )
+        self.indicator.set_icon_theme_path(str(TRAY_ICON_DIR))
+        self.indicator.set_title("WorkBuddy Manager")
+        self.indicator.set_status(AyatanaAppIndicator3.IndicatorStatus.ACTIVE)
+        if (TRAY_ICON_DIR / f"{SYMBOLIC_ICON}.png").is_file():
+            self.indicator.set_attention_icon(SYMBOLIC_ICON)
+
+        menu = Gtk.Menu()
+        open_item = Gtk.MenuItem(label="打开主窗口")
+        open_item.connect("activate", lambda *_: self.present_window())
+        menu.append(open_item)
+
+        browser_item = Gtk.MenuItem(label="在浏览器中打开")
+        browser_item.connect("activate", lambda *_: self._open_external())
+        menu.append(browser_item)
+
+        copy_item = Gtk.MenuItem(label="复制访问地址")
+        copy_item.connect("activate", lambda *_: self._copy_url())
+        menu.append(copy_item)
+
+        menu.append(Gtk.SeparatorMenuItem())
+        status = Gtk.MenuItem(label=f"运行中  ·  127.0.0.1:{self.port}")
+        status.set_sensitive(False)
+        menu.append(status)
+        menu.append(Gtk.SeparatorMenuItem())
+
+        quit_item = Gtk.MenuItem(label="退出")
+        quit_item.connect("activate", lambda *_: self._quit())
+        menu.append(quit_item)
+        menu.show_all()
+        self.indicator.set_menu(menu)
+        self.indicator.set_secondary_activate_target(open_item)
+
+    def _setup_window(self, present: bool) -> None:
+        win = Gtk.ApplicationWindow(application=self, title="WorkBuddy Manager")
+        win.set_default_size(1280, 840)
+        win.set_position(Gtk.WindowPosition.CENTER)
+        if ICON_FILE.is_file():
+            win.set_icon_from_file(str(ICON_FILE))
+        else:
+            win.set_icon_name(ICON_NAME)
+        win.connect("delete-event", self._on_close)
+
+        webview = WebKit2.WebView()
+        settings = webview.get_settings()
+        settings.set_enable_javascript(True)
+        settings.set_javascript_can_access_clipboard(True)
+        settings.set_enable_write_console_messages_to_stdout(False)
+        cookie_file = data_dir() / "cookies.sqlite"
+        webview.get_context().get_cookie_manager().set_persistent_storage(
+            str(cookie_file),
+            WebKit2.CookiePersistentStorage.SQLITE,
+        )
+        webview.load_uri(self.url)
+        webview.connect("load-failed", self._on_load_failed)
+        win.add(webview)
+        self.window = win
+        self.webview = webview
+        if present:
+            self.present_window()
+            if self._first_password:
+                GLib.idle_add(self._show_initial_password)
+
+    def present_window(self) -> None:
+        if self.window is None:
+            self._setup_window(present=True)
+            return
+        self.window.show_all()
+        self.window.present()
+        self.window.deiconify()
+
+    def _on_close(self, *_args) -> bool:
+        if self.window is not None:
+            self.window.hide()
+        return True
+
+    def _on_load_failed(self, _webview, _event, uri, error) -> bool:
+        if self._quitting:
+            return False
+        message = getattr(error, "message", str(error))
+        self._error("页面没有打开", f"{uri}\n{message}")
+        return False
+
+    def _show_initial_password(self) -> bool:
+        password = self._first_password
+        if not password or self.window is None:
+            return False
+        dialog = Gtk.Dialog(
+            title="初始管理员密码",
+            transient_for=self.window,
+            modal=True,
+            destroy_with_parent=True,
+        )
+        dialog.add_button("我已记下", Gtk.ResponseType.OK)
+        box = dialog.get_content_area()
+        box.set_margin_start(18)
+        box.set_margin_end(18)
+        box.set_margin_top(12)
+        box.set_margin_bottom(6)
+        box.set_spacing(8)
+        intro = Gtk.Label(label="第一次启动已创建管理员。登录后请到「设置 → 管理用户」修改密码。")
+        intro.set_line_wrap(True)
+        intro.set_xalign(0)
+        user = Gtk.Label(label="用户名    admin")
+        user.set_selectable(True)
+        user.set_xalign(0)
+        secret = Gtk.Label(label=f"密码        {password}")
+        secret.set_selectable(True)
+        secret.set_xalign(0)
+        hint = Gtk.Label(
+            label=f"这份密码也写在 {data_dir() / 'initial-admin.txt'}",
+        )
+        hint.set_line_wrap(True)
+        hint.set_xalign(0)
+        hint.get_style_context().add_class("dim-label")
+        for widget in (intro, user, secret, hint):
+            box.add(widget)
+        dialog.show_all()
+        dialog.run()
+        dialog.destroy()
+        return False
+
+    def _open_external(self) -> None:
+        Gio.AppInfo.launch_default_for_uri(self.url, None)
+
+    def _copy_url(self) -> None:
+        Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD).set_text(self.url, -1)
+
+    def _error(self, title: str, body: str) -> None:
+        dialog = Gtk.MessageDialog(
+            transient_for=self.window,
+            modal=True,
+            message_type=Gtk.MessageType.ERROR,
+            buttons=Gtk.ButtonsType.CLOSE,
+            text=title,
+        )
+        dialog.format_secondary_text(body)
+        dialog.run()
+        dialog.destroy()
+
+    def _quit(self) -> None:
+        self._quitting = True
+        self._shutdown_server()
+        if self.indicator is not None:
+            self.indicator.set_status(AyatanaAppIndicator3.IndicatorStatus.PASSIVE)
+        self.quit()
+
+    def _shutdown_server(self) -> None:
+        proc = self.proc
+        self.proc = None
+        if proc is None or proc.poll() is not None:
+            return
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            return
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+    @property
+    def url(self) -> str:
+        return f"http://127.0.0.1:{self.port}/"
+
+
+def _free_port(start: int) -> int:
+    for port in range(start, start + 20):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                sock.bind(("127.0.0.1", port))
+            except OSError:
+                continue
+            return port
+    raise RuntimeError(f"127.0.0.1:{start} 起的端口都被占用了")
+
+
+def _wait_port(port: int, proc: subprocess.Popen, timeout: float) -> bool:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if proc.poll() is not None:
+            return False
+        try:
+            with socket.create_connection(("127.0.0.1", port), 0.4):
+                return True
+        except OSError:
+            time.sleep(0.2)
+    return False
+
+
+def _tail(path: Path, lines: int = 40) -> str:
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    return "\n".join(text.splitlines()[-lines:])
+
+
+def main() -> int:
+    app = WorkbuddyApp()
+    try:
+        return app.run(sys.argv)
+    finally:
+        app._shutdown_server()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,24 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=WorkBuddy Manager
+Name[zh_CN]=WorkBuddy 管理台
+GenericName=账号池管理控制台
+GenericName[zh_CN]=账号池管理控制台
+Comment=腾讯 CodeBuddy 账号池管理控制台与 OpenAI 兼容网关
+Comment[zh_CN]=腾讯 CodeBuddy 账号池管理控制台与 OpenAI 兼容网关
+Exec=workbuddy-manager
+Icon=workbuddy-manager
+Terminal=false
+Categories=Network;
+Keywords=WorkBuddy;CodeBuddy;账号;网关;
+StartupNotify=true
+StartupWMClass=com.ithtelab.WorkbuddyManager
+SingleMainWindow=true
+DBusActivatable=false
+Actions=open;
+
+[Desktop Action open]
+Name=打开主窗口
+Name[zh_CN]=打开主窗口
+Exec=workbuddy-manager

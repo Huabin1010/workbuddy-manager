@@ -1,0 +1,23 @@
+[package]
+name = "workbuddy-manager-launcher"
+version = "1.0.80"
+edition = "2021"
+description = "WorkBuddy Manager 的 Windows 桌面壳"
+publish = false
+
+[[bin]]
+name = "WorkBuddyManager"
+path = "src/main.rs"
+
+[dependencies]
+getrandom = "0.3"
+image = { version = "0.25.10", default-features = false, features = ["png"] }
+tao = "0.37.1"
+tray-icon = "0.26.1"
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
+] }
+wry = "0.57.0"

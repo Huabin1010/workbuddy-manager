@@ -16,8 +16,68 @@ import {
   useSpring,
   useTransform,
 } from 'motion/react';
+import Link from 'next/link';
+import {usePathname} from 'next/navigation';
 
-import {Fragment, useRef, useState, memo, useCallback} from 'react';
+import {Fragment, useRef, useState, memo, useCallback, type ReactNode} from 'react';
+
+const DOCK_EASE = {duration: 0.22, ease: [0.22, 1, 0.36, 1] as const};
+
+function isExternalHref(href: string, external?: boolean): boolean {
+  return !!external || href.startsWith('https://') || href.startsWith('http://');
+}
+
+function isDockActive(pathname: string, href: string): boolean {
+  const path = pathname.replace(/\/+$/, '') || '/';
+  const target = href.replace(/\/+$/, '') || '/';
+  return path === target || path.startsWith(`${target}/`);
+}
+
+function DockLink({
+  href,
+  external,
+  className,
+  children,
+  onNavigate,
+  active,
+  label,
+}: {
+  href: string;
+  external?: boolean;
+  className?: string;
+  children: ReactNode;
+  onNavigate?: () => void;
+  active?: boolean;
+  label?: string;
+}) {
+  if (isExternalHref(href, external)) {
+    return (
+      <a
+        href={withBasePath(href)}
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label={label}
+        className={className}
+      >
+        {children}
+      </a>
+    );
+  }
+
+  return (
+    <Link
+      href={href}
+      prefetch
+      scroll
+      aria-label={label}
+      aria-current={active ? 'page' : undefined}
+      className={className}
+      onClick={onNavigate}
+    >
+      {children}
+    </Link>
+  );
+}
 
 export type FloatingDockItem = {
   title: string;
@@ -67,9 +127,14 @@ const FloatingDockMobile = memo(
     buttonClassName?: string;
   }) => {
       const [open, setOpen] = useState(false);
+      const pathname = usePathname();
 
       const toggleOpen = useCallback(() => {
         setOpen((prev) => !prev);
+      }, []);
+
+      const closeMenu = useCallback(() => {
+        setOpen(false);
       }, []);
 
       return (
@@ -110,19 +175,20 @@ const FloatingDockMobile = memo(
                         return (
                           <motion.div
                             key={item.title}
-                            initial={{opacity: 0, y: 10}}
+                            initial={{opacity: 0, y: 8}}
                             animate={{
                               opacity: 1,
                               y: 0,
                             }}
                             exit={{
                               opacity: 0,
-                              y: 10,
+                              y: 6,
                               transition: {
-                                delay: idx * 0.05,
+                                delay: idx * 0.03,
+                                duration: 0.16,
                               },
                             }}
-                            transition={{delay: (total - 1 - idx) * 0.05}}
+                            transition={{delay: (total - 1 - idx) * 0.03, ...DOCK_EASE}}
                           >
                             {item.customComponent ? (
                               <div
@@ -134,20 +200,23 @@ const FloatingDockMobile = memo(
                                 {item.customComponent}
                               </div>
                             ) : item.href ? (
-                            <a
-                              href={withBasePath(item.href)}
+                            <DockLink
+                              href={item.href}
+                              external={item.external}
+                              label={item.title}
+                              active={!isExternalHref(item.href, item.external) && isDockActive(pathname, item.href)}
+                              onNavigate={closeMenu}
                               className={cn(
-                                  'flex h-8 w-8 items-center justify-center rounded-full bg-gray-50 dark:bg-neutral-900',
+                                  'flex h-8 w-8 items-center justify-center rounded-full bg-gray-50 transition-colors duration-200 dark:bg-neutral-900',
+                                  !isExternalHref(item.href, item.external) && isDockActive(pathname, item.href) &&
+                                    'bg-white shadow-sm dark:bg-neutral-700',
                                   buttonClassName,
                               )}
-                              {...((item.external || item.href.startsWith('https://')) ?
-                                {target: '_blank', rel: 'noopener noreferrer'} :
-                                {})}
                             >
                               <div className="flex items-center justify-center">
                                 {item.icon}
                               </div>
-                            </a>
+                            </DockLink>
                           ) : (
                             <button
                               onClick={item.onClick}
@@ -365,28 +434,30 @@ const IconContainer = memo(
       );
 
       const width = useSpring(widthTransform, {
-        mass: 0.1,
-        stiffness: 150,
-        damping: 12,
+        mass: 0.12,
+        stiffness: 220,
+        damping: 26,
       });
       const height = useSpring(heightTransform, {
-        mass: 0.1,
-        stiffness: 150,
-        damping: 12,
+        mass: 0.12,
+        stiffness: 220,
+        damping: 26,
       });
 
       const widthIcon = useSpring(widthTransformIcon, {
-        mass: 0.1,
-        stiffness: 150,
-        damping: 12,
+        mass: 0.12,
+        stiffness: 220,
+        damping: 26,
       });
       const heightIcon = useSpring(heightTransformIcon, {
-        mass: 0.1,
-        stiffness: 150,
-        damping: 12,
+        mass: 0.12,
+        stiffness: 220,
+        damping: 26,
       });
 
       const [hovered, setHovered] = useState(false);
+      const pathname = usePathname();
+      const active = !!href && !isExternalHref(href, external) && isDockActive(pathname, href);
 
       const handleMouseEnter = useCallback(() => {
         setHovered(true);
@@ -396,46 +467,57 @@ const IconContainer = memo(
         setHovered(false);
       }, []);
 
-      const Element = customComponent ? 'div' : href ? 'a' : 'button';
-      const elementProps = customComponent ? {} : href ?
-      {
-        // 原生 <a> 不经过 next/link，basePath 不会自动生效
-        href: withBasePath(href),
-        ...((external || href.startsWith('https://')) ?
-            {target: '_blank', rel: 'noopener noreferrer'} :
-            {}),
-      } :
-      {onClick};
-
-      return (
-        <Element {...elementProps}>
+      const iconFace = (
+        <motion.div
+          ref={ref}
+          style={{width, height}}
+          onMouseEnter={handleMouseEnter}
+          onMouseLeave={handleMouseLeave}
+          data-active={active || undefined}
+          className={cn(
+              'relative flex aspect-square items-center justify-center rounded-full cursor-pointer transition-colors duration-200',
+              active ?
+                'bg-white text-foreground shadow-sm dark:bg-neutral-700' :
+                'bg-gray-200 text-neutral-700 dark:bg-neutral-800 dark:text-neutral-200',
+          )}
+        >
+          <AnimatePresence>
+            {hovered && (
+              <motion.div
+                initial={{opacity: 0, y: 6, x: '-50%'}}
+                animate={{opacity: 1, y: 0, x: '-50%'}}
+                exit={{opacity: 0, y: 4, x: '-50%'}}
+                transition={DOCK_EASE}
+                className="pointer-events-none absolute -top-8 left-1/2 w-fit rounded-md border border-gray-200 bg-gray-100 px-2 py-0.5 text-xs whitespace-pre text-neutral-700 dark:border-neutral-900 dark:bg-neutral-800 dark:text-white"
+              >
+                {tooltip || title}
+              </motion.div>
+            )}
+          </AnimatePresence>
           <motion.div
-            ref={ref}
-            style={{width, height}}
-            onMouseEnter={handleMouseEnter}
-            onMouseLeave={handleMouseLeave}
-            className="relative flex aspect-square items-center justify-center rounded-full bg-gray-200 cursor-pointer dark:bg-neutral-800"
+            style={{width: widthIcon, height: heightIcon}}
+            className="flex items-center justify-center"
           >
-            <AnimatePresence>
-              {hovered && (
-                <motion.div
-                  initial={{opacity: 0, y: 10, x: '-50%'}}
-                  animate={{opacity: 1, y: 0, x: '-50%'}}
-                  exit={{opacity: 0, y: 2, x: '-50%'}}
-                  className="absolute -top-8 left-1/2 w-fit rounded-md border border-gray-200 bg-gray-100 px-2 py-0.5 text-xs whitespace-pre text-neutral-700 dark:border-neutral-900 dark:bg-neutral-800 dark:text-white"
-                >
-                  {tooltip || title}
-                </motion.div>
-              )}
-            </AnimatePresence>
-            <motion.div
-              style={{width: widthIcon, height: heightIcon}}
-              className="flex items-center justify-center"
-            >
-              {customComponent || icon}
-            </motion.div>
+            {customComponent || icon}
           </motion.div>
-        </Element>
+          {active ? (
+            <span className="pointer-events-none absolute bottom-1.5 h-[3px] w-[3px] rounded-full bg-foreground/80" />
+          ) : null}
+        </motion.div>
+      );
+
+      if (customComponent) return iconFace;
+      if (href) {
+        return (
+          <DockLink href={href} external={external} active={active} label={title}>
+            {iconFace}
+          </DockLink>
+        );
+      }
+      return (
+        <button type="button" onClick={onClick}>
+          {iconFace}
+        </button>
       );
     },
 );

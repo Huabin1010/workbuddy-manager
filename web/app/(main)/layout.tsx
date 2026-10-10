@@ -1,7 +1,8 @@
 'use client';
 
 import {memo, useEffect} from 'react';
-import {useRouter} from 'next/navigation';
+import {usePathname, useRouter} from 'next/navigation';
+import {AnimatePresence, motion} from 'motion/react';
 import {ManagementBar} from '@/components/common/layout/ManagementBar';
 import {CommandPalette} from '@/components/common/layout/CommandPalette';
 import {LanguageToggle} from '@/components/common/layout/LanguageToggle';
@@ -18,6 +19,7 @@ export default function MainLayout({
 }) {
   const {me, loading} = useAuth();
   const router = useRouter();
+  const pathname = usePathname();
 
   // 仅在确认未登录时跳转；不阻塞内容渲染，避免每次切页闪一下
   useEffect(() => {
@@ -45,7 +47,18 @@ export default function MainLayout({
                   <LanguageToggle />
                   <RealmToggle />
                 </div>
-                {children}
+                <AnimatePresence mode="wait" initial={false}>
+                  <motion.div
+                    key={pathname}
+                    initial={{opacity: 0, y: 8}}
+                    animate={{opacity: 1, y: 0}}
+                    exit={{opacity: 0, y: -4}}
+                    transition={{duration: 0.2, ease: [0.22, 1, 0.36, 1]}}
+                    className="flex min-h-0 w-full flex-1 flex-col"
+                  >
+                    {children}
+                  </motion.div>
+                </AnimatePresence>
               </div>
             </div>
           </div>

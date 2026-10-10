@@ -264,7 +264,7 @@ export default function ClaimPage() {
       {/* 中奖弹窗：额度在上、密钥在中、调用地址在下；关闭时自动复制密钥 */}
       {got && <Confetti seed={code} />}
       <Dialog open={!!got} onOpenChange={(v) => { if (!v) void closeAndCopy(); }}>
-        <DialogContent className="max-w-sm animate-in fade-in-0 zoom-in-95 rounded-[24px] duration-300">
+        <DialogContent className="max-w-sm rounded-[24px]">
           <DialogHeader>
             <DialogTitle className="flex items-center justify-center gap-2 text-center">
               <span className="animate-in zoom-in-50 inline-flex h-6 w-6 items-center justify-center rounded-full bg-emerald-500/15 duration-500">

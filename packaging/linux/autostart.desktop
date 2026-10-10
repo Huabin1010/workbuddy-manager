@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=WorkBuddy Manager
+Name[zh_CN]=WorkBuddy 管理台
+Comment=在顶部状态栏保持 WorkBuddy 管理台
+Exec=workbuddy-manager --background
+Icon=workbuddy-manager
+Terminal=false
+Categories=Network;
+StartupNotify=false
+X-GNOME-Autostart-enabled=true
+NoDisplay=true
