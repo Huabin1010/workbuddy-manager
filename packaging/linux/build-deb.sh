@@ -119,7 +119,7 @@ Priority: optional
 Architecture: ${ARCH}
 Maintainer: WorkBuddy Manager <packager@localhost>
 Installed-Size: ${INSTALLED_KB}
-Depends: python3 (>= 3.11), python3-gi, gir1.2-gtk-3.0, gir1.2-webkit2-4.1, gir1.2-ayatanaappindicator3-0.1, libayatana-appindicator3-1
+Depends: python3 (>= 3.14), python3-gi, gir1.2-gtk-3.0, gir1.2-webkit2-4.1, gir1.2-ayatanaappindicator3-0.1, libayatana-appindicator3-1
 Homepage: https://github.com/ithtelab/workbuddy-manager
 Description: WorkBuddy 账号池管理桌面版
  腾讯 CodeBuddy 账号池管理控制台。本包装好本地服务、应用窗口、
