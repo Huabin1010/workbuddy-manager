@@ -96,8 +96,8 @@ cat > "${APP}/使用说明.txt" <<EOF
 WorkBuddy Manager ${VER}  Windows 桌面版
 
 1. 解压整个文件夹（不要只抽出 exe）。
-2. 双击 WorkBuddyManager.exe。
-3. 第一次会弹出管理员账号和密码，也可以事后在
+2. 双击 WorkBuddyManager.exe。窗口会直接进入管理台，不用输入密码。
+3. 第一次会弹出管理员账号和密码。这个密码只在用浏览器打开时才需要，也可以事后在
    %LOCALAPPDATA%\\workbuddy-manager\\initial-admin.txt 里看到。
 4. 点窗口关闭只会收到托盘。要退出，请在任务栏右下角图标上选「退出」。
 5. 如果提示缺少 WebView2，先双击 WebView2Setup.exe（或安装 Microsoft Edge），再重新打开。
