@@ -30,7 +30,7 @@ fn main() {
         return;
     }
 
-    let (mut child, port, first_password) = match start_server() {
+    let (mut child, port, first_password, desktop_token) = match start_server() {
         Ok(started) => started,
         Err(err) => {
             message("WorkBuddy 管理台启动失败", &err);
@@ -52,13 +52,13 @@ fn main() {
         message(
             "初始管理员账号",
             &format!(
-                "用户名: admin\n密码: {password}\n\n请登录后在「设置 → 管理用户」中修改密码。\n同一份密码也写在了数据目录的 initial-admin.txt 里。"
+                "用户名: admin\n密码: {password}\n\n这个窗口会直接进入管理台。密码只在用浏览器打开时才需要。\n请登录后在「设置 → 管理用户」中修改。\n同一份密码也写在了数据目录的 initial-admin.txt 里。"
             ),
         );
     }
 
     let url = format!("http://127.0.0.1:{port}/");
-    if let Err(err) = run_window(&url, child) {
+    if let Err(err) = run_window(&url, child, &desktop_token) {
         message(
             "无法打开窗口",
             &format!(
@@ -85,7 +85,7 @@ fn data_dir() -> PathBuf {
     dir
 }
 
-fn start_server() -> Result<(Child, u16, Option<String>), String> {
+fn start_server() -> Result<(Child, u16, Option<String>, String), String> {
     let root = install_dir();
     let python = root.join("python").join("python.exe");
     let app = root.join("app");
@@ -123,6 +123,8 @@ fn start_server() -> Result<(Child, u16, Option<String>), String> {
         .env("WB_SECURE_COOKIE", "false")
         .env("WB_ENABLE_DOCS", "0");
 
+    let desktop_token = random_token(32);
+    cmd.env("WB_DESKTOP_TOKEN", &desktop_token);
     if !users.is_file() {
         let password = random_token(12);
         let note = state.join("initial-admin.txt");
@@ -153,7 +155,7 @@ fn start_server() -> Result<(Child, u16, Option<String>), String> {
         .creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP)
         .spawn()
         .map_err(|err| format!("启动后台服务失败：{err}"))?;
-    Ok((child, port, first_password))
+    Ok((child, port, first_password, desktop_token))
 }
 
 fn free_port() -> u16 {
@@ -209,7 +211,7 @@ fn random_token(len: usize) -> String {
         .collect()
 }
 
-fn run_window(url: &str, mut server: Child) -> Result<(), String> {
+fn run_window(url: &str, mut server: Child, desktop_token: &str) -> Result<(), String> {
     let event_loop = EventLoop::new();
     let (window_rgba, window_w, window_h) = scaled_icon(64);
     let window_icon = WindowIcon::from_rgba(window_rgba, window_w, window_h)
@@ -221,8 +223,16 @@ fn run_window(url: &str, mut server: Child) -> Result<(), String> {
         .with_window_icon(Some(window_icon))
         .build(&event_loop)
         .map_err(|err| format!("创建窗口失败：{err}"))?;
+    let mut headers = http::HeaderMap::new();
+    headers.insert(
+        http::HeaderName::from_static("x-workbuddy-desktop"),
+        desktop_token.parse().map_err(|_| "桌面凭证含非法字符".to_string())?,
+    );
     let webview = WebViewBuilder::new()
-        .with_url(url)
+        .with_url_and_headers(url, headers)
+        .with_initialization_script(format!(
+            "document.cookie='wb_desktop={desktop_token}; Path=/; SameSite=Lax';"
+        ))
         .build(&window)
         .map_err(|err| format!("WebView2 初始化失败：{err}"))?;
 

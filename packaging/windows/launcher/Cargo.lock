@@ -2716,9 +2716,10 @@ checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 
 [[package]]
 name = "workbuddy-manager-launcher"
-version = "1.0.80"
+version = "1.0.81"
 dependencies = [
  "getrandom",
+ "http",
  "image",
  "tao",
  "tray-icon",

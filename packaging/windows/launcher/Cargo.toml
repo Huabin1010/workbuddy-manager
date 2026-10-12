@@ -1,6 +1,6 @@
 [package]
 name = "workbuddy-manager-launcher"
-version = "1.0.80"
+version = "1.0.81"
 edition = "2021"
 description = "WorkBuddy Manager 的 Windows 桌面壳"
 publish = false
@@ -21,3 +21,4 @@ windows-sys = { version = "0.61", features = [
     "Win32_UI_WindowsAndMessaging",
 ] }
 wry = "0.57.0"
+http = "1"

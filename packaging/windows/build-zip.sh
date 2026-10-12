@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-VER="${VER:-1.0.80}"
+VER="${VER:-1.0.81}"
 PY_VER="${PY_VER:-3.12.10}"
 STAGE="$(mktemp -d /tmp/workbuddy-win.XXXXXX)"
 APP="${STAGE}/workbuddy-manager"

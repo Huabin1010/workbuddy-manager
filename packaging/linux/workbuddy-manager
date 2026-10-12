@@ -10,6 +10,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from urllib.parse import urlparse
 
 os.environ.setdefault("WEBKIT_DISABLE_DMABUF_RENDERER", "1")
 
@@ -19,8 +20,9 @@ gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
 gi.require_version("WebKit2", "4.1")
 gi.require_version("AyatanaAppIndicator3", "0.1")
+gi.require_version("Soup", "3.0")
 
-from gi.repository import AyatanaAppIndicator3, Gdk, Gio, GLib, Gtk, WebKit2
+from gi.repository import AyatanaAppIndicator3, Gdk, Gio, GLib, Gtk, Soup, WebKit2
 
 APP_ID = "com.ithtelab.WorkbuddyManager"
 APP_ROOT = Path(os.environ.get("WORKBUDDY_APP_ROOT", "/usr/lib/workbuddy-manager"))
@@ -51,6 +53,7 @@ class WorkbuddyApp(Gtk.Application):
         self.webview: WebKit2.WebView | None = None
         self.proc: subprocess.Popen | None = None
         self.port = 7864
+        self._desktop_token = ""
         self.log_path = data_dir() / "server.log"
         self.indicator = None
         self._first_password: str | None = None
@@ -106,6 +109,9 @@ class WorkbuddyApp(Gtk.Application):
         env["WB_STATIC_DIR"] = str(APP_ROOT / "web" / "out")
         env["WB_SECURE_COOKIE"] = "false"
         env["WB_ENABLE_DOCS"] = "0"
+        # 只交给这个窗口。浏览器打开同一地址时没有请求头，仍然要登录。
+        self._desktop_token = secrets.token_urlsafe(32)
+        env["WB_DESKTOP_TOKEN"] = self._desktop_token
         env.pop("WB_ADMIN_PASSWORD", None)
         if not users.is_file():
             self._first_password = secrets.token_urlsafe(9)
@@ -204,7 +210,8 @@ class WorkbuddyApp(Gtk.Application):
             str(cookie_file),
             WebKit2.CookiePersistentStorage.SQLITE,
         )
-        webview.load_uri(self.url)
+        webview.connect("resource-load-started", self._stamp_desktop_header)
+        self._arm_desktop_cookie(webview)
         webview.connect("load-failed", self._on_load_failed)
         win.add(webview)
         self.window = win
@@ -226,6 +233,37 @@ class WorkbuddyApp(Gtk.Application):
         if self.window is not None:
             self.window.hide()
         return True
+
+    def _arm_desktop_cookie(self, webview: WebKit2.WebView) -> None:
+        """页面脚本发请求之前就把凭证写进本机 cookie。请求头只盖在首次导航上时，后续的 /api 仍能带上。"""
+        token = self._desktop_token
+        if not token:
+            webview.load_uri(self.url)
+            return
+        cookie = Soup.Cookie.new("wb_desktop", token, "127.0.0.1", "/", -1)
+        cookie.set_secure(False)
+        cookie.set_http_only(True)
+        manager = webview.get_context().get_cookie_manager()
+
+        def _loaded(mgr, result, view):
+            try:
+                mgr.add_cookie_finish(result)
+            except Exception:
+                pass
+            view.load_uri(self.url)
+
+        manager.add_cookie(cookie, None, _loaded, webview)
+
+    def _stamp_desktop_header(self, _webview, _resource, request) -> None:
+        token = self._desktop_token
+        if not token:
+            return
+        host = (urlparse(request.get_uri() or "").hostname or "").lower()
+        if host not in {"127.0.0.1", "localhost", "::1"}:
+            return
+        headers = request.get_http_headers()
+        if headers is not None:
+            headers.replace("X-WorkBuddy-Desktop", token)
 
     def _on_load_failed(self, _webview, _event, uri, error) -> bool:
         if self._quitting:
@@ -251,7 +289,9 @@ class WorkbuddyApp(Gtk.Application):
         box.set_margin_top(12)
         box.set_margin_bottom(6)
         box.set_spacing(8)
-        intro = Gtk.Label(label="第一次启动已创建管理员。登录后请到「设置 → 管理用户」修改密码。")
+        intro = Gtk.Label(
+            label="这个窗口已经直接进入管理台。下面的密码只在用浏览器打开时才需要，登录后请到「设置 → 管理用户」修改。",
+        )
         intro.set_line_wrap(True)
         intro.set_xalign(0)
         user = Gtk.Label(label="用户名    admin")

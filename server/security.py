@@ -481,14 +481,54 @@ def _token_identity(request: Request, token: str) -> dict:
     }
 
 
+def _loopback(request: Request) -> bool:
+    """TCP 对端是不是本机。不看 X-Forwarded-For，避免反代头把外网请求伪装成本机。"""
+    host = request.client.host if request.client is not None else ''
+    return host in {'127.0.0.1', '::1'}
+
+
+def _desktop_identity(request: Request, cfg: dict) -> dict | None:
+    """桌面壳的本机身份。
+
+    启动器生成一次性密钥，只放进自己打开的窗口（请求头或本机 cookie），
+    并且只接受来自 127.0.0.1 的连接。浏览器直接打开同一地址时没有这把密钥，
+    仍然要走登录。密钥为空表示这不是桌面模式（网页部署），此路关闭。
+    """
+    import os
+    import secrets as _secrets
+
+    expected = os.environ.get('WB_DESKTOP_TOKEN', '').strip()
+    if not expected or not _loopback(request):
+        return None
+    presented = (request.headers.get('x-workbuddy-desktop') or '').strip()
+    if not presented:
+        presented = (request.cookies.get('wb_desktop') or '').strip()
+    if not presented:
+        return None
+    try:
+        ok = _secrets.compare_digest(presented.encode(), expected.encode())
+    except (TypeError, ValueError):
+        return None
+    if not ok:
+        return None
+    users = [u for u in cfg.get('users', []) if isinstance(u, dict) and u.get('username')]
+    admin = next((u for u in users if u.get('role') == 'admin'), None)
+    user = admin or (users[0] if users else None)
+    if not user:
+        return None
+    return {'username': str(user['username']), 'role': user.get('role') or 'viewer'}
+
+
 def current_user(request: Request) -> dict:
     """解析请求身份。**这是管理端唯一的身份入口**。
 
-    两条凭据路径，**会话优先**：
+    三条凭据路径：
 
-      1. **签名 Cookie**（浏览器）——既有行为逐字保留，含改密码 / 吊销 / 闲置
+      1. **桌面壳**（仅本机、且带启动器签发的密钥）——窗口里直接是管理员，
+         不弹登录框。浏览器没有这把密钥，走不了这条。
+      2. **签名 Cookie**（浏览器）——既有行为逐字保留，含改密码 / 吊销 / 闲置
          超时的专门提示；role 以用户表为准，用户被删或会话版本不匹配即拒绝。
-      2. **`Authorization: Bearer wbt_...`**（作用域化 API Token，见
+      3. **`Authorization: Bearer wbt_...`**（作用域化 API Token，见
          docs/api-tokens.md）——角色由 token 的 scope 决定，并在 `request.state`
          上标记来源，供 `require_session_admin` 拒绝高危接口。
 
@@ -500,6 +540,9 @@ def current_user(request: Request) -> dict:
     只授权模型调用，与后台权限无关）。
     """
     cfg = load_users()
+    desktop = _desktop_identity(request, cfg)
+    if desktop is not None:
+        return desktop
     session_err: HTTPException | None = None
     if request.cookies.get(config.COOKIE_NAME):
         try:

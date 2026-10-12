@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-VER="${VER:-1.0.80}"
+VER="${VER:-1.0.81}"
 ARCH="${ARCH:-amd64}"
 PY="${PY:-/usr/bin/python3}"
 STAGE="$(mktemp -d /tmp/workbuddy-deb.XXXXXX)"
